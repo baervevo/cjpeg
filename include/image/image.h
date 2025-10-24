@@ -5,20 +5,13 @@
 #include <stdint.h>
 
 #include "image/color_space.h"
-
-typedef struct {
-  const char* name;
-  uint8_t* data;
-  size_t width;
-  size_t height;
-  size_t stride;
-} Channel;
+#include "image/channel.h"
 
 typedef struct {
   size_t width;
   size_t height;
   size_t channel_count;
-  Channel* channels;
+  Channel* channels; // TODO(@mariusz): Improve cache locality
   ColorSpace color_space;
 } Image;
 

@@ -1,0 +1,1 @@
+Project intended to explore JPEG encoding and learn C.

@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "image/color_space.h"
 #include "image/image.h"
 #include "utils/math.h"
@@ -19,78 +21,53 @@ void rgb_to_ycbcr(
   if (!R || !G || !B || !Y || !Cb || !Cr) return;
   size_t width = R->width;
   size_t height = R->height;
+  size_t chroma_width = (width + subsampling->Cb.horizontal - 1) / subsampling->Cb.horizontal;
+  size_t chroma_height = (height + subsampling->Cb.vertical - 1) / subsampling->Cb.vertical;
+  uint32_t* Cb_accumulator = calloc(chroma_width * chroma_height, sizeof(uint32_t));
+  uint32_t* Cr_accumulator = calloc(chroma_width * chroma_height, sizeof(uint32_t));
+  uint16_t* count = calloc(chroma_width * chroma_height, sizeof(uint16_t));
   for (size_t y = 0; y < height; ++y) {
     for (size_t x = 0; x < width; ++x) {
       size_t i = y * R->stride + x;
-      Y->data[i] = rgb_to_y(
-        &R->data[i], &G->data[i], &B->data[i]
-      );
+      uint8_t r = R->data[i];
+      uint8_t g = G->data[i];
+      uint8_t b = B->data[i];
+      size_t cb_x = x / subsampling->Cb.horizontal;
+      size_t cb_y = y / subsampling->Cb.vertical;
+      size_t cb_i = cb_y * chroma_width + cb_x;
+      Y->data[y * Y->stride + x] = rgb_to_y(r, g, b);
+      Cb_accumulator[cb_i] += rgb_to_cb(r, g, b);
+      Cr_accumulator[cb_i] += rgb_to_cr(r, g, b);
+      count[cb_i]++;
     }
   }
-  size_t Y_horizontal = subsampling->Y.horizontal;
-  size_t Y_vertical = subsampling->Y.vertical;
-  size_t cb_sample_width = Y_horizontal / subsampling->Cb.horizontal;
-  size_t cb_sample_height = Y_vertical / subsampling->Cb.vertical;
-  for (size_t y = 0; y < height; y += cb_sample_height) {
-    for (size_t x = 0; x < width; x += cb_sample_width) {
-      float cb_sum = 0;
-      size_t count = 0;
-      for (size_t row = 0; row < cb_sample_height; ++row) {
-        for (size_t col = 0; col < cb_sample_width; ++col) {
-          size_t pixel_x = x + col;
-          size_t pixel_y = y + row;
-          if (pixel_x >= width || pixel_y >= height ) continue;
-          size_t i = pixel_y * R->stride + pixel_x;
-          cb_sum += rgb_to_cb(
-            &R->data[i], &G->data[i], &B->data[i]
-          );
-          count++;
-        }
-      }
-      float cb_avg = (count > 0) ? (cb_sum / count) : 0;
-      size_t cb_index = (y / cb_sample_height) * Cb->stride + (x / cb_sample_width);
-      Cb->data[cb_index] = clamp_to_uint8_t(cb_avg);
+  for (size_t y = 0; y < chroma_height; ++y) {
+    for (size_t x = 0; x < chroma_width; ++x) {
+      size_t i = y * chroma_width + x;
+      uint32_t cb_sum = Cb_accumulator[i];
+      uint32_t cr_sum = Cr_accumulator[i];
+      uint16_t n = count[i];
+      if (n == 0) n = 1;
+      Cb->data[y * Cb->stride + x] = clamp_to_uint8_t(cb_sum / n);
+      Cr->data[y * Cr->stride + x] = clamp_to_uint8_t(cr_sum / n);
     }
   }
-  size_t cr_sample_width = Y_horizontal / subsampling->Cr.horizontal;
-  size_t cr_sample_height = Y_vertical / subsampling->Cr.vertical;
-  for (size_t y = 0; y < height; y += cr_sample_height) {
-    for (size_t x = 0; x < width; x += cr_sample_width) {
-      float cr_sum = 0;
-      size_t count = 0;
-      for (size_t row = 0; row < cr_sample_height; ++row) {
-        for (size_t col = 0; col < cr_sample_width; ++col) {
-          size_t pixel_x = x + col;
-          size_t pixel_y = y + row;
-          if (pixel_x >= width || pixel_y >= height ) continue;
-          size_t i = pixel_y * R->stride + pixel_x;
-          cr_sum += rgb_to_cr(
-            &R->data[i], &G->data[i], &B->data[i]
-          );
-          count++;
-        }
-      }
-      float cr_avg = (count > 0) ? (cr_sum / count) : 0;
-      size_t cr_index = (y / cr_sample_height) * Cr->stride + (x / cr_sample_width);
-      Cr->data[cr_index] = clamp_to_uint8_t(cr_avg);
-    }
-  }
+  free(Cb_accumulator);
+  free(Cr_accumulator);
+  free(count);
 }
 
-uint8_t rgb_to_y(const uint8_t* r, const uint8_t* g, const uint8_t* b) {
-  if (!r || !g || !b) return 0;
-  float y_float = 0.299f * (*r) + 0.587f * (*g) + 0.114f * (*b);
+static inline uint8_t rgb_to_y(const uint8_t r, const uint8_t g, const uint8_t b) {
+  float y_float = 0.299f * (r) + 0.587f * (g) + 0.114f * (b);
   return clamp_to_uint8_t(y_float); 
 }
 
-uint8_t rgb_to_cb(const uint8_t* r, const uint8_t* g, const uint8_t* b) {
-  if (!r || !g || !b) return 0;
-  float cb_float = -0.168736f * (*r) - 0.331264f * (*g) + 0.5f * (*b) + 128.0f;
+static inline uint8_t rgb_to_cb(const uint8_t r, const uint8_t g, const uint8_t b) {
+  float cb_float = -0.168736f * (r) - 0.331264f * (g) + 0.5f * (b) + 128.0f;
   return clamp_to_uint8_t(cb_float);
 }
 
-uint8_t rgb_to_cr(const uint8_t* r, const uint8_t* g, const uint8_t* b) {
-  if (!r || !g || !b) return 0;
-  float cr_float =  0.5f * (*r) - 0.418688f * (*g) - 0.081312f * (*b) + 128.0f;
+static inline uint8_t rgb_to_cr(const uint8_t r, const uint8_t g, const uint8_t b) {
+  float cr_float =  0.5f * (r) - 0.418688f * (g) - 0.081312f * (b) + 128.0f;
   return clamp_to_uint8_t(cr_float);
 }
